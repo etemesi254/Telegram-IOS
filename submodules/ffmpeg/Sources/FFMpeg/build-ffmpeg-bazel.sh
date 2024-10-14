@@ -50,9 +50,11 @@ CONFIGURE_FLAGS="--enable-cross-compile --disable-programs \
                  --enable-bsf=aac_adtstoasc,vp9_superframe,h264_mp4toannexb \
                  --enable-decoder=h264,libvpx_vp9,hevc,libopus,mp3,aac,flac,alac_at,pcm_s16le,pcm_s24le,pcm_f32le,gsm_ms_at \
                  --enable-encoder=libvpx_vp9,aac_at \
-                 --enable-demuxer=aac,mov,m4v,mp3,ogg,libopus,flac,wav,aiff,matroska,mpegts \
+                 --enable-demuxer=aac,mov,m4v,mp3,ogg,libopus,flac,wav,aiff,matroska,mpegts,hls \
                  --enable-parser=aac,h264,mp3,libopus \
-                 --enable-protocol=file \
+                 --enable-protocol=file,http,https,tcp \
+                 --enable-videotoolbox \
+                 --enable-hwaccel=h264_videotoolbox \
                  --enable-muxer=mp4,matroska,mpegts \
                  "
 

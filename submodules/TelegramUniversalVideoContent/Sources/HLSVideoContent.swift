@@ -14,6 +14,7 @@ import RangeSet
 import TelegramVoip
 import ManagedFile
 import AppBundle
+import FFMpegBinding
 
 public final class HLSQualitySet {
     public let qualityFiles: [Int: FileMediaReference]
@@ -214,6 +215,8 @@ public final class HLSVideoContent: UniversalVideoContent {
     }
     
     public func makeContentNode(accountId: AccountRecordId, postbox: Postbox, audioSession: ManagedAudioSession) -> UniversalVideoContentNode & ASDisplayNode {
+        let decoder = HLSVideoPlayer()
+        decoder.readData();
         if #available(iOS 17.1, *) {
             return HLSVideoJSContentNode(accountId: accountId, postbox: postbox, audioSessionManager: audioSession, userLocation: self.userLocation, fileReference: self.fileReference, streamVideo: self.streamVideo, loopVideo: self.loopVideo, enableSound: self.enableSound, baseRate: self.baseRate, fetchAutomatically: self.fetchAutomatically)
         } else {
