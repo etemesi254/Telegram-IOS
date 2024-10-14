@@ -1,0 +1,14 @@
+prefix=/Users/etemesi/git/swift/Telegram-iOS/submodules/HlsFFmpeg/thin/i386
+exec_prefix=${prefix}
+libdir=/Users/etemesi/git/swift/Telegram-iOS/submodules/HlsFFmpeg/thin/i386/lib
+includedir=/Users/etemesi/git/swift/Telegram-iOS/submodules/HlsFFmpeg/thin/i386/include
+
+Name: libavcodec
+Description: FFmpeg codec library
+Version: 61.3.100
+Requires: libavutil >= 59.8.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavcodec -pthread -liconv -lm -framework VideoToolbox -framework CoreFoundation -framework CoreMedia -framework CoreVideo
+Libs.private: 
+Cflags: -I${includedir}

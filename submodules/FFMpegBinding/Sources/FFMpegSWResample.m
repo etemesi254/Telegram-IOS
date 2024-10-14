@@ -53,18 +53,23 @@
         _context = NULL;
     }
     
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    _context = swr_alloc_set_opts(NULL,
-                                  av_get_default_channel_layout((int)_destinationChannelCount),
+    AVChannelLayout *inChannel=NULL, *outChannel=NULL;
+    av_channel_layout_default(outChannel,  _destinationChannelCount);
+    av_channel_layout_default(inChannel,_currentSourceChannelCount);
+    
+    int ret = swr_alloc_set_opts2(&_context,
+                                   outChannel,
                                   (enum AVSampleFormat)_destinationSampleFormat,
                                   (int)_destinationSampleRate,
-                                  av_get_default_channel_layout(channelCount),
+                                   inChannel,
                                   (enum AVSampleFormat)_sourceSampleFormat,
                                   (int)_sourceSampleRate,
                                   0,
                                   NULL);
-#pragma clang diagnostic pop
+    if (ret <0){
+        // TODO: Print the error
+        return;
+    }
     _currentSourceChannelCount = channelCount;
     _ratio = MAX(1, _destinationSampleRate / MAX(_sourceSampleRate, 1)) * MAX(1, _destinationChannelCount / channelCount) * 2;
     if (_context) {
@@ -75,11 +80,8 @@
 - (NSData * _Nullable)resample:(FFMpegAVFrame *)frame {
     AVFrame *frameImpl = (AVFrame *)[frame impl];
 
-#if LIBAVFORMAT_VERSION_MAJOR >= 59
     int numChannels = frameImpl->ch_layout.nb_channels;
-#else
-    int numChannels = frameImpl->channels;
-#endif
+
     if (numChannels != _currentSourceChannelCount) {
         [self resetContextForChannelCount:numChannels];
     }

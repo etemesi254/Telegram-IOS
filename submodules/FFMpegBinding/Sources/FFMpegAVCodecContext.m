@@ -35,11 +35,8 @@
 }
 
 - (int32_t)channels {
-#if LIBAVFORMAT_VERSION_MAJOR >= 59
     return (int32_t)_impl->ch_layout.nb_channels;
-#else
-    return (int32_t)_impl->channels;
-#endif
+
 }
 
 - (int32_t)sampleRate {
