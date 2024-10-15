@@ -10,6 +10,7 @@
 - (int) initializeContext:(AVFormatContext *)ctx secondValue:(int)streamId thirdValue:(bool)isVideo {
     
     int ret = -1;
+    
     ret = [self initializeCodec:ctx secondValue:isVideo thirdValue:streamId];
     if (ret <0){
         NSLog(@"Could not initialize codec");
@@ -83,98 +84,114 @@
     SingleCtx *context = [[SingleCtx alloc] init];
     [context initializeContext: fmtCtx secondValue:streamId thirdValue:false];
     _ctx = context;
-    int sampleRate = _ctx.ctx->sample_rate;
-    int channelCount = _ctx.ctx->ch_layout.nb_channels;
-    
-    const char *sampleFormat = av_get_sample_fmt_name( _ctx.ctx->sample_fmt);
-    int bytesPerSample = av_get_bytes_per_sample(_ctx.ctx->sample_fmt);
-    
-    int maxFrameSize = sampleRate * channelCount * bytesPerSample;
-    
-    _reusablePcmData = [NSMutableData dataWithLength:maxFrameSize];
-    
-    printf("Audio Sample format: %s Bytes per sample: %d\n",sampleFormat,bytesPerSample);
-    
     
     return 0;
 }
-- (NSData * _Nullable) decodeAudio:(AVPacket * _Nullable) pkt{
+- (int) decodeAudio:(AVPacket * _Nullable) pkt secondValue:(HlsOutputData * _Nullable)output{
     int ret = 0;
     // submit the packet to the decoder
     ret = avcodec_send_packet(_ctx.ctx, pkt);
     if (ret < 0) {
         fprintf(stderr, "Error submitting a packet for decoding (%s)\n", av_err2str(ret));
-        return NULL;
+        return ret;
     }
     
     // get all the available frames from the decoder
     while (ret >= 0) {
         ret = avcodec_receive_frame(_ctx.ctx, _ctx.frame);
         if (ret < 0) {
+            // TODO: Handle way of calling multiple avcodec_recieve_frame
+            // using the bugs bunny test i think, we fail on first sample because we
+            // don't call avcodec_recieve_frame multiple times, if it fails we return more.
+            
             // those two return values are special and mean there is no output
             // frame available, but there were no errors during decoding
-            if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
-                return NULL;
+            if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)){
+                fprintf(stderr, "No more frames");
+                return ret;
+            }
             
             fprintf(stderr, "Error during decoding (%s)\n", av_err2str(ret));
-            return NULL;
+            return ret;
         }
         
-        assert(_ctx.ctx->codec->type==AVMEDIA_TYPE_AUDIO &&"A codec that is not audio sent to audio decoder");
+        // confirm we are decoding audio
+        assert(_ctx.ctx->codec->type==AVMEDIA_TYPE_AUDIO &&
+               "A codec that is not audio sent to audio decoder");
         
         AVFrame *frame = _ctx.frame;
+#if DEBUG
         printf("audio_frame n:%d nb_samples:%d pts:%s\n",
                _frameNo++, frame->nb_samples,
                av_ts2timestr(frame->pts,&_ctx.ctx->time_base));
+#endif
         
-        NSData *data = [self convertFrameToPCM];
+        ret = [self convertFrameToPCM: output];
         
-        av_frame_unref(_ctx.frame);
-        
-        return data;
+        return ret;
     }
-
-    return NULL;
-}
-- (NSData * _Nonnull) convertFrameToPCM{
     
-    printf("Converting frame to PCM\n");
+    return ret;
+}
+- (int ) convertFrameToPCM:(HlsOutputData * _Nullable) output{
+    
+    // TODO: Handle complex format not supported by audio output.
+    // Thinking of double and such, AVAudio cannot play them
+    
+    if (output==NULL){
+#if DEBUG
+        fprintf(stderr,"Output sent to PCM is nil!!");
+#endif
+        return -1;
+    }
+    
+#if DEBUG
+    printf("Converting Frame to PCM\n");
+#endif
+    
     int channelCount = _ctx.ctx->ch_layout.nb_channels;
     int bytesPerSample = av_get_bytes_per_sample(_ctx.ctx->sample_fmt);
     
     
-    int dataSize = _ctx.frame->nb_samples * channelCount * bytesPerSample;
-    
-    // Ensure our reusable buffer is large enough
-    if (dataSize > _reusablePcmData.length) {
-        _reusablePcmData.length = dataSize;
+    int singleChannelSize = _ctx.frame->nb_samples * bytesPerSample;
+    int dataSize = singleChannelSize*channelCount;
+    if (output.audioData == nil){
+        output.audioData = [NSMutableData dataWithLength:dataSize + 12 /*good luck charm*/];
+
     }
+    // allocate if size is too small
+    if (output.audioData.length < dataSize){
+        output.audioData = [NSMutableData dataWithLength:dataSize + 12 /*good luck charm*/];
+        
+    }
+    assert(output.audioData.length>=dataSize && "Too small audio buffer");
     
-    uint8_t *pcmBuffer = (uint8_t *)_reusablePcmData.mutableBytes;
+
+    uint8_t *pcmBuffer = (uint8_t *)output.audioData.mutableBytes;
     
+
     // Handle planar and packed formats
     if (av_sample_fmt_is_planar(_ctx.ctx->sample_fmt)) {
+        // PLANNAR FORMAT
+        // Pack it in the following format
+        // LLLLL...LL, RRRRRRR
+        // Since the AVAudio does not support interleaved data for some reason
         // Planar format (e.g., AV_SAMPLE_FMT_S16P)
-        for (int i = 0; i < _ctx.frame->nb_samples; i++) {
-            for (int ch = 0; ch < channelCount; ch++) {
-                memcpy(pcmBuffer, &_ctx.frame->data[ch][i*bytesPerSample], bytesPerSample);
-                // increment bytes per sample
-                pcmBuffer += bytesPerSample;
-            }
+        for (int ch = 0; ch < channelCount; ch++) {
+            memcpy(pcmBuffer, _ctx.frame->data[ch], singleChannelSize);
+            pcmBuffer+=singleChannelSize;
         }
     } else {
         // Packed format (e.g., AV_SAMPLE_FMT_S16)
-        memcpy(pcmBuffer, _ctx.frame->data[0], dataSize);
+        memcpy(pcmBuffer, _ctx.frame->data[0], singleChannelSize);
     }
+    return 0;
     
-    // Return a new NSData object that references the filled portion of our buffer
-    return [NSData dataWithBytesNoCopy:_reusablePcmData.mutableBytes length:dataSize freeWhenDone:NO];
 }
 
-- (void) dealloc{
-    
-    
+- (void)dealloc {
 }
+
 @end
 
 @implementation VideoCtx
@@ -206,14 +223,15 @@
     if (!_pkt) {
         fprintf(stderr, "Could not allocate packet\n");
     }
+    _output = [[HlsOutputData alloc] init];
 }
 // tutorial https://github.com/Golim4r/OpenGL-Video-Player/blob/master/src/Decoder.cpp
 
-- (void) readData{
+- (int) readData{
     
     if (_url==nil){
         NSLog(@"URL not initialized, call init()!!!");
-        return;
+        return -1;
     }
     
     
@@ -228,7 +246,7 @@
     /* open input file, and allocate format context */
     if (ret<0) {
         fprintf(stderr, "cannot open file %d\n",ret);
-        return ;
+        return ret;
     }
     _av_format=fmt_ctx;
     
@@ -237,7 +255,7 @@
     if (avformat_find_stream_info(fmt_ctx, NULL) < 0) {
         ret = -1;
         fprintf(stderr, "Could not find stream information\n");
-        return;
+        return ret ;
     }
     
     _nbStreams= fmt_ctx->nb_streams;
@@ -283,23 +301,34 @@
     // get best streams now
     [self getBestVideoStream];
     [self getBestAudioStream];
-    if (_videoStreamIndex >0 && _nbStreams){
+    if (_videoStreamIndex >=0 && _nbStreams){
         [self initializeVideoCodec:(int)_videoStreamIndex];
     }
-    if (_audioStreamIndex > 0 && _nbStreams){
+    if (_audioStreamIndex >= 0 && _nbStreams){
         [self initializeAudioCodec:(int)_audioStreamIndex];
     }
+    return 0;
     
 }
-- (NSData * _Nullable) decodeAudio{
-    printf("Decoding Audio");
+
+- (HlsOutputData * _Nullable) decode{
+    if (DEBUG){
+        printf("Starting decoding\n");
+    }
     int ret = 0;
+    
     /* read frames from the file */
     while (av_read_frame(_av_format, _pkt) >= 0) {
         if (_pkt->stream_index == _audioStreamIndex){
-            NSData *audio = [self.audioDecoderCtx decodeAudio:_pkt];
+            int ret = [self.audioDecoderCtx decodeAudio:_pkt secondValue:_output];
             av_packet_unref(_pkt);
-            return audio;
+
+            if (ret >=0){
+                // Successful
+                return _output;
+            } else{
+                return NULL;
+            }
         }
         av_packet_unref(_pkt);
         if (ret < 0){
@@ -307,6 +336,7 @@
         }
     }
     return NULL;
+    
 }
 - (int) getBestVideoStream{
     printf("Fetching best stream");
@@ -325,6 +355,7 @@
     return _videoStreamIndex;
 }
 - (int) getBestAudioStream{
+    
     int ret = av_find_best_stream(_av_format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     if (ret <0){
         const char *cfilename=[_url UTF8String];
@@ -391,4 +422,6 @@
     
     
 }
+
+
 @end

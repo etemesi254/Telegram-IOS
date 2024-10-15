@@ -23,10 +23,10 @@ class HLSAudioPlayer{
     
     
     func scheduleAudioPacket(_ data: Data) {
-      
-            let buffer = AVAudioPCMBuffer(pcmFormat: streamingFormat!,
-                                                                frameCapacity: UInt32(data.count)/UInt32(self.bytesPerSample)
-            )!
+        
+        let buffer = AVAudioPCMBuffer(pcmFormat: streamingFormat!,
+                                      frameCapacity: UInt32(data.count)/(UInt32(self.bytesPerSample) * streamingFormat!.channelCount)
+        )!
         
         let frameCapacity = buffer.frameCapacity;
         
@@ -34,42 +34,58 @@ class HLSAudioPlayer{
         buffer.frameLength = frameCapacity;
         
         // Copy network data into audio buffer
-        if (streamingFormat?.commonFormat == AVAudioCommonFormat.pcmFormatInt16){
-            let audioBufferPointer = buffer.int16ChannelData?[0]
-            data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) in
-                if let sourcePointer = bufferPointer.bindMemory(to: Int16.self).baseAddress {
-                    audioBufferPointer?.update(from: sourcePointer, count: Int(frameCapacity))
+        if (streamingFormat!.channelCount == 1){
+            // Mono Audio
+            if (streamingFormat?.commonFormat == AVAudioCommonFormat.pcmFormatInt16){
+                let audioBufferPointer = buffer.int16ChannelData?[0]
+                data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) in
+                    if let sourcePointer = bufferPointer.bindMemory(to: Int16.self).baseAddress {
+                        audioBufferPointer?.update(from: sourcePointer, count: Int(frameCapacity))
+                    }
+                }
+            } else if (streamingFormat?.commonFormat == AVAudioCommonFormat.pcmFormatInt32){
+                let audioBufferPointer = buffer.int32ChannelData?[0]
+                data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) in
+                    if let sourcePointer = bufferPointer.bindMemory(to: Int32.self).baseAddress {
+                        audioBufferPointer?.update(from: sourcePointer, count: Int(frameCapacity))
+                    }
+                }
+            } else if (streamingFormat?.commonFormat==AVAudioCommonFormat.pcmFormatFloat32){
+                let audioBufferPointer = buffer.floatChannelData?[0]
+                
+                data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) in
+                    if let sourcePointer = bufferPointer.bindMemory(to: Float.self).baseAddress {
+                        
+                        audioBufferPointer?.update(from: sourcePointer, count: Int(frameCapacity))
+                    }
                 }
             }
-        } else if (streamingFormat?.commonFormat == AVAudioCommonFormat.pcmFormatInt32){
-            let audioBufferPointer = buffer.int32ChannelData?[0]
-            data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) in
-                if let sourcePointer = bufferPointer.bindMemory(to: Int32.self).baseAddress {
-                    audioBufferPointer?.update(from: sourcePointer, count: Int(frameCapacity))
-                }
-            }
-        } else if (streamingFormat?.commonFormat==AVAudioCommonFormat.pcmFormatFloat32){
+        } else{
+            // stereo audio
             let audioBufferPointer = buffer.floatChannelData?[0]
-            
+            let audioBufferPointer2 = buffer.floatChannelData?[1]
             
             data.withUnsafeBytes { (bufferPointer: UnsafeRawBufferPointer) in
                 if let sourcePointer = bufferPointer.bindMemory(to: Float.self).baseAddress {
-
+                    
                     audioBufferPointer?.update(from: sourcePointer, count: Int(frameCapacity))
+                    audioBufferPointer2?.update(from: sourcePointer.advanced(by: Int(frameCapacity)),
+                                                count: Int(frameCapacity))
                 }
             }
+            
         }
         playerNode?.scheduleBuffer(buffer)
     }
     
     func start() {
-            do {
-                try engine?.start()
-                playerNode?.play()
-            } catch {
-                print("Error starting audio engine: \(error)")
-            }
+        do {
+            try engine?.start()
+            playerNode?.play()
+        } catch {
+            print("Error starting audio engine: \(error)")
         }
+    }
 }
 
 class HLSVideoPlayer{
@@ -98,26 +114,31 @@ class HLSVideoPlayer{
         }
     }
     func setupAudio(){
-        self.decoder.readData();
+        if (self.decoder.readData()<0){
+            print("Cannot initialize decoder context");
+            return ;
+        }
         self.playAudio();
-
+        
         self.dataGroup.leave();
         print("Finished reading metadata");
         self.audioPlayer.start();
-
+        
         self.metaDataRead = true;
         
         while true{
-            let packet = self.decoder.decodeAudio();
+            let packet = self.decoder.decode();
             if (packet != nil){
-                self.audioPlayer.scheduleAudioPacket(packet!);
+                if (packet?.streamType==0){
+                    self.audioPlayer.scheduleAudioPacket(packet!.audioData! as Data);
+                }
             } else{
                 print("Packet was nil");
                 break;
             }
         }
     }
-        
+    
     public func playAudio(){
         print("Starting audio play")
         
@@ -144,15 +165,15 @@ class HLSVideoPlayer{
                 case AV_SAMPLE_FMT_S16,AV_SAMPLE_FMT_S16P:
                     commonFormat = AVAudioCommonFormat.pcmFormatInt16;
                     self.audioPlayer.bytesPerSample = 2;
-
+                    
                 case AV_SAMPLE_FMT_S32,AV_SAMPLE_FMT_S32P:
                     commonFormat=AVAudioCommonFormat.pcmFormatInt32;
                     self.audioPlayer.bytesPerSample = 4;
-
+                    
                 case AV_SAMPLE_FMT_FLT,AV_SAMPLE_FMT_FLTP:
                     commonFormat = AVAudioCommonFormat.pcmFormatFloat32;
                     self.audioPlayer.bytesPerSample = 4;
-
+                    
                 case AV_SAMPLE_FMT_DBL,AV_SAMPLE_FMT_DBLP:
                     commonFormat=AVAudioCommonFormat.pcmFormatFloat64;
                     self.audioPlayer.bytesPerSample = 8;
@@ -160,12 +181,12 @@ class HLSVideoPlayer{
                     commonFormat = AVAudioCommonFormat.otherFormat;
                 }
                 // set interleaved
-//                switch c{
-//                case AV_SAMPLE_FMT_S16,AV_SAMPLE_FMT_S32,AV_SAMPLE_FMT_FLT,AV_SAMPLE_FMT_DBL:
-//                    interleaved = true;
-//                default:
-//                    interleaved=false;
-//                }
+                //                switch c{
+                //                case AV_SAMPLE_FMT_S16,AV_SAMPLE_FMT_S32,AV_SAMPLE_FMT_FLT,AV_SAMPLE_FMT_DBL:
+                //                    interleaved = true;
+                //                default:
+                //                    interleaved=false;
+                //                }
             }
         }
         
@@ -173,7 +194,10 @@ class HLSVideoPlayer{
             commonFormat:commonFormat,
             sampleRate: Double(sampleRate),
             channels:AVAudioChannelCount(numberChannels),
-            interleaved:false);
+            // BUG: Can't have this as true as it is not supported for CoreAudio
+            // Throws kAudioUnitErr_FormatNotSupported
+            // so leaving it as false, and ensuring samples are correct.
+            interleaved:false)!;
         
         self.audioPlayer.engine?.attach(self.audioPlayer.playerNode!);
         

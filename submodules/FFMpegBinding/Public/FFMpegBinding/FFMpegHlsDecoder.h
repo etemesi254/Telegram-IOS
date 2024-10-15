@@ -25,6 +25,17 @@ struct SingleStreamInfo {
     StreamType type;
 } typedef SingleStreamInfo;
 
+@interface HlsOutputData : NSObject
+@property int streamType; // 0, audio 1,video
+@property (nullable) NSMutableData * audioData;
+@property (nullable) NSMutableData * videoData;
+
+@end
+
+@implementation HlsOutputData
+@synthesize streamType, audioData,videoData;
+
+@end
 
 /// Single Context, stores an object that groups the whole
 /// variables for a single audio or video context
@@ -42,13 +53,12 @@ struct SingleStreamInfo {
 
 @interface AudioCtx :NSObject
 @property int frameNo;
-@property (nullable) NSMutableData *reusablePcmData;
-- (NSData * _Nonnull )convertFrameToPCM;
+- (int )convertFrameToPCM: (HlsOutputData * _Nullable )output ;
 
 @property (nullable) SingleCtx *ctx;
 - (int) initCtx: (AVFormatContext * _Nonnull) fmtCtx secondValue: (int) streamId;
 -(void) dealloc;
-- (NSData * _Nullable) decodeAudio: (AVPacket * _Nullable)pkt;
+- (int) decodeAudio: (AVPacket * _Nullable)pkt  secondValue: (HlsOutputData * _Nullable )output;
 
 @end
 
@@ -61,8 +71,6 @@ struct SingleStreamInfo {
 
 
 @interface FFmpegHLSDecoder : NSObject
-
-
 // The url we are fetching content from, can be file, http, tcp...
 @property (nullable) NSString *url;
 
@@ -87,14 +95,17 @@ struct SingleStreamInfo {
 @property (nullable) VideoCtx *videoDecoderCtx;
 @property (nullable) AudioCtx *audioDecoderCtx;
 
+@property (nullable) HlsOutputData *output;
+
 @property bool shouldDecodeAudio;
 @property bool shouldDecodeVideo;
 
 
 
+
 - (void) init:(NSString * _Nonnull)url;
 
-- (void) readData;
+- (int) readData;
 - (void) dealloc;
 - (int) getBestVideoStream;
 - (int) getBestAudioStream;
@@ -104,7 +115,7 @@ struct SingleStreamInfo {
 
 - (SingleStreamInfo const * _Nullable) getStreamInfo:(int) streamId;
 
-- (NSData * _Nullable) decodeAudio;
+- (HlsOutputData * _Nullable ) decode;
 
 
 
