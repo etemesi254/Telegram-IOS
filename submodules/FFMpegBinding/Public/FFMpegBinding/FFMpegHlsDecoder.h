@@ -25,17 +25,26 @@ struct SingleStreamInfo {
     StreamType type;
 } typedef SingleStreamInfo;
 
+@interface HlsVideoData:NSObject
+@property int width;
+@property int height;
+@property (nullable) NSMutableData *data;
+@end
+@implementation HlsVideoData
+@synthesize  width,height,data;
+@end
+
 @interface HlsOutputData : NSObject
 @property int streamType; // 0, audio 1,video
 @property (nullable) NSMutableData * audioData;
-@property (nullable) NSMutableData * videoData;
-
+@property (nullable) HlsVideoData * videoData;
 @end
 
 @implementation HlsOutputData
 @synthesize streamType, audioData,videoData;
-
 @end
+
+
 
 /// Single Context, stores an object that groups the whole
 /// variables for a single audio or video context
@@ -46,18 +55,19 @@ struct SingleStreamInfo {
 /// Initialize the whole structure filling the frames , codecs and packets
 - (int) initializeContext: (AVFormatContext * _Nonnull) ctx secondValue: (int) streamId thirdValue:(bool)isVideo;
 /// Deallocate the structure freeing the contexts
-- (void) dealloc ;
+- (void) dealloc;
+
 - (int) initializeCodec:(AVFormatContext * _Nonnull) fmtCtx secondValue:(bool)isVideo thirdValue:(int)streamId;
 
 @end
 
 @interface AudioCtx :NSObject
-@property int frameNo;
-- (int )convertFrameToPCM: (HlsOutputData * _Nullable )output ;
 
+@property int frameNo;
 @property (nullable) SingleCtx *ctx;
+
 - (int) initCtx: (AVFormatContext * _Nonnull) fmtCtx secondValue: (int) streamId;
--(void) dealloc;
+- (int) convertFrameToPCM: (HlsOutputData * _Nullable )output;
 - (int) decodeAudio: (AVPacket * _Nullable)pkt  secondValue: (HlsOutputData * _Nullable )output;
 
 @end
@@ -65,8 +75,16 @@ struct SingleStreamInfo {
 
 @interface VideoCtx :NSObject
 @property (nullable) SingleCtx *ctx;
+@property (nullable) AVBufferRef *hwBufferRef;
+@property bool hwDecodingAvailable;
+
 - (int) initCtx: (AVFormatContext * _Nonnull) fmtCtx secondValue: (int) streamId;
+- (int) initHwDecoder :(AVFormatContext * _Nonnull) fmtCtx secondValue: (int) streamId;
+- (int) decodeVideo: (AVPacket * _Nullable)pkt  secondValue: (HlsOutputData * _Nullable )output;
+
+
 - (void) dealloc;
+
 @end
 
 
@@ -88,37 +106,38 @@ struct SingleStreamInfo {
 @property int filled;
 
 // The format demuxer. Stored to read the format details
-@property (nullable) AVFormatContext *av_format;
+@property (nullable) AVFormatContext *avFmtCtx;
 @property (nullable) AVPacket *pkt;
 
 // Contexts
 @property (nullable) VideoCtx *videoDecoderCtx;
 @property (nullable) AudioCtx *audioDecoderCtx;
-
+// Output storage, managed here to make it easy for me and watch for memory
+// sizes
 @property (nullable) HlsOutputData *output;
 
 @property bool shouldDecodeAudio;
 @property bool shouldDecodeVideo;
 
 
-
-
 - (void) init:(NSString * _Nonnull)url;
+- (void) dealloc;
+
 
 - (int) readData;
-- (void) dealloc;
 - (int) getBestVideoStream;
 - (int) getBestAudioStream;
 
+- (int) setVideoDecoder:(int)videoStreamId;
+
+
 - (int) initializeVideoCodec:(int)videoStreamId;
 - (int) initializeAudioCodec:(int)audioStreamId;
+- (int) seekTo: (double)timeStamp;
+
 
 - (SingleStreamInfo const * _Nullable) getStreamInfo:(int) streamId;
-
 - (HlsOutputData * _Nullable ) decode;
-
-
-
 @end
 
 #endif

@@ -53,15 +53,15 @@
         _context = NULL;
     }
     
-    AVChannelLayout *inChannel=NULL, *outChannel=NULL;
-    av_channel_layout_default(outChannel,  _destinationChannelCount);
-    av_channel_layout_default(inChannel,_currentSourceChannelCount);
+    AVChannelLayout inChannel={}, outChannel={};
+    av_channel_layout_default(&outChannel,  _destinationChannelCount);
+    av_channel_layout_default(&inChannel, _currentSourceChannelCount);
     
     int ret = swr_alloc_set_opts2(&_context,
-                                   outChannel,
+                                   &outChannel,
                                   (enum AVSampleFormat)_destinationSampleFormat,
                                   (int)_destinationSampleRate,
-                                   inChannel,
+                                   &inChannel,
                                   (enum AVSampleFormat)_sourceSampleFormat,
                                   (int)_sourceSampleRate,
                                   0,

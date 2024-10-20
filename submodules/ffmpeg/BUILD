@@ -75,8 +75,16 @@ ffmpeg_header_paths = [
     "libavformat/version.h",
     "libavformat/avio.h",
     "libavformat/avformat.h",
+    "libavformat/version_major.h",
     "libavcodec/adts_parser.h",
     "libavcodec/avcodec.h",
+    "libavcodec/codec.h",
+    "libavcodec/codec_id.h",
+    "libavcodec/version_major.h",
+    "libavcodec/defs.h",
+    "libavcodec/packet.h",
+    "libavcodec/codec_desc.h", 
+    "libavcodec/codec_par.h",
     "libavcodec/version.h",
     "libavcodec/videotoolbox.h",
     "libavcodec/mediacodec.h",
@@ -89,6 +97,7 @@ ffmpeg_header_paths = [
     "libavcodec/dv_profile.h",
     "libswresample/version.h",
     "libswresample/swresample.h",
+    "libswresample/version_major.h"
 ]
 
 ffmpeg_libs = [
