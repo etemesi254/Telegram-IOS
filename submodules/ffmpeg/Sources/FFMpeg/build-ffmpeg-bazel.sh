@@ -42,6 +42,7 @@ CONFIGURE_FLAGS="--enable-cross-compile --disable-programs \
                  --disable-doc --enable-pic --disable-all --disable-everything \
                  --enable-avcodec  \
                  --enable-swresample \
+                 --enable-swscale   \
                  --enable-avformat \
                  --disable-xlib \
                  --enable-libopus \

@@ -4,7 +4,8 @@
 #import "libavformat/avformat.h"
 #include "libavutil/timestamp.h"
 #include "libavutil/imgutils.h"
-
+#include "libswresample/swresample.h"
+#include "libswscale/swscale.h"
 
 static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
                                         const enum AVPixelFormat *pix_fmts)
@@ -17,7 +18,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
             return *p;
     }
     
-    fprintf(stderr, "Failed to get HW surface format.\n");
+    NSLog(@"Failed to get HW surface format.\n");
     // fall back to software
     return *pix_fmts;
 }
@@ -117,10 +118,6 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     while (ret >= 0) {
         ret = avcodec_receive_frame(_ctx.ctx, _ctx.frame);
         if (ret < 0) {
-            // TODO: Handle way of calling multiple avcodec_recieve_frame
-            // using the bugs bunny test i think, we fail on first sample because we
-            // don't call avcodec_recieve_frame multiple times, if it fails we return more.
-            
             // those two return values are special and mean there is no output
             // frame available, but there were no errors during decoding
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)){
@@ -134,14 +131,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
         // confirm we are decoding audio
         assert(_ctx.ctx->codec->type==AVMEDIA_TYPE_AUDIO &&
                "A codec that is not audio sent to audio decoder");
-        
-        AVFrame *frame = _ctx.frame;
-        if (DEBUG){
-            printf("audio_frame n:%d nb_samples:%d pts:%s\n",
-                   _frameNo++, frame->nb_samples,
-                   av_ts2timestr(frame->pts,&_ctx.ctx->time_base));
-        }
-        ret = [self convertFrameToPCM: output];
+                ret = [self convertFrameToPCM: output];
         
         return ret;
     }
@@ -160,9 +150,6 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
         return -1;
     }
     
-    if (DEBUG){
-        NSLog(@"Converting Frame to PCM\n");
-    }
     
     int channelCount = _ctx.ctx->ch_layout.nb_channels;
     int bytesPerSample = av_get_bytes_per_sample(_ctx.ctx->sample_fmt);
@@ -172,11 +159,11 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     int singleChannelSize = _ctx.frame->nb_samples * bytesPerSample;
     int dataSize = singleChannelSize*channelCount;
     if (output.audioData == nil){
-        output.audioData = [NSMutableData dataWithLength:dataSize + 12 /*good luck charm*/];
+        output.audioData = [NSMutableData dataWithLength:dataSize /*good luck charm*/];
     }
     // allocate if size is too small
     if (output.audioData.length < dataSize){
-        output.audioData = [NSMutableData dataWithLength:dataSize + 12 /*good luck charm*/];
+        output.audioData = [NSMutableData dataWithLength:dataSize /*good luck charm*/];
         
     }
     assert(output.audioData.length>=dataSize && "Too small audio buffer");
@@ -216,15 +203,22 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     [context initializeContext: ctx secondValue:streamId thirdValue:true];
     _ctx = context;
     
-    
-    _hwDecodingAvailable=false;
-    if ([self initHwDecoder:ctx secondValue:streamId] < 0){
-        NSLog(@"Could not initialize hardware decoder, using software decoder");
-        _hwDecodingAvailable=false;
-    } else{
-        NSLog(@"Hardware decoder successfully initialized, using it for decoding");
-        _hwDecodingAvailable=true;
+    _bgraFrame = av_frame_alloc();
+    if (_bgraFrame == NULL){
+        fprintf(stderr,
+                "Allocation failed");
+        return -1;
     }
+    
+    
+//    _hwDecodingAvailable=false;
+//    if ([self initHwDecoder:ctx secondValue:streamId] < 0){
+//        NSLog(@"Could not initialize hardware decoder, using software decoder");
+//        _hwDecodingAvailable=false;
+//    } else{
+//        NSLog(@"Hardware decoder successfully initialized, using it for decoding");
+//        _hwDecodingAvailable=true;
+//    }
     return 0;
 }
 - (int) decodeVideo:(AVPacket * _Nullable) pkt secondValue:(HlsOutputData * _Nullable)output{
@@ -244,12 +238,6 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     while (ret >= 0) {
         ret = avcodec_receive_frame(_ctx.ctx, _ctx.frame);
         if (ret < 0) {
-            // TODO: Handle way of calling multiple avcodec_recieve_frame
-            // using the bugs bunny test i think, we fail on first sample because we
-            // don't call avcodec_recieve_frame multiple times, if it fails we return more.
-            
-            // those two return values are special and mean there is no output
-            // frame available, but there were no errors during decoding
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)){
                 return ret;
             }
@@ -272,28 +260,59 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
             tmp_frame = _ctx.frame;
         }
         
-        int size = av_image_get_buffer_size(tmp_frame->format,tmp_frame->width,tmp_frame->height,1);
+        // rescale to bgra
+        struct SwsContext *resizer = sws_getCachedContext(_resizer,
+                                                          tmp_frame->width, tmp_frame->height, tmp_frame->format,
+                                                          tmp_frame->width, tmp_frame->height, AV_PIX_FMT_BGRA,
+                                                          SWS_BILINEAR, NULL,NULL,NULL);
+        _resizer=resizer;
+        
+        int dest_size = av_image_get_buffer_size(AV_PIX_FMT_BGRA, tmp_frame->width, tmp_frame->height, 1);
+                
         if (output.videoData == nil){
             HlsVideoData *temp = [[HlsVideoData alloc] init];
-            output.videoData = temp;
+            output.videoParams = temp;
             
-            output.videoData.data = [NSMutableData dataWithLength:size + 12 /*good luck charm*/];
+            uint8_t *videoData = malloc(sizeof(uint8_t) * (dest_size+12));
+            if (videoData==NULL){
+                
+                return AVERROR(ENOMEM);
+            }
+            output.videoData = videoData;
+            output.videoSize = dest_size;
         }
         // allocate if size is too small
-        if (output.videoData.data.length < size){
-            output.videoData.data = [NSMutableData dataWithLength:size + 12 /*good luck charm*/];
+        if (output.videoSize < dest_size){
+            uint8_t *videoData = realloc(output.videoData,sizeof(uint8_t)*(dest_size+12));
+            if (videoData==NULL){
+                return AVERROR(ENOMEM);
+            }
+            output.videoData =videoData;
+            output.videoSize=dest_size;
         }
-        output.videoData.width = _ctx.frame->width;
-        output.videoData.height = _ctx.frame->height;
         
-        int ret = av_image_copy_to_buffer((uint8_t *) output.videoData.data.mutableBytes, size,
-                                          (const uint8_t * const *)tmp_frame->data,
-                                          (const int *)tmp_frame->linesize,
-                                          tmp_frame->format, tmp_frame->width,tmp_frame->height, 1);
+        
+        output.videoParams.width = _ctx.frame->width;
+        output.videoParams.height = _ctx.frame->height;
+        output.streamType = 1;
+        
+        int ret = sws_scale_frame(resizer, _bgraFrame, tmp_frame);
+        if (ret< 0){
+            fprintf(stderr, "Could not resize frame");
+        }
+        
+        // first copy to yuv buffer
+        ret = av_image_copy_to_buffer(output.videoData,dest_size,
+                                      (const uint8_t * const *)_bgraFrame->data,
+                                      (const int *)_bgraFrame->linesize,
+                                      _bgraFrame->format, _bgraFrame->width,
+                                      _bgraFrame->height, 1);
         
         if (ret < 0){
             fprintf(stderr, "Can not copy image to buffer\n");
         }
+        
+        return 1;
         
     }
     
@@ -303,6 +322,8 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     if (_hwBufferRef){
         av_buffer_unref(&_hwBufferRef);
     }
+    av_frame_free(&_bgraFrame);
+    
 }
 - (int)initHwDecoder:(AVFormatContext * _Nonnull)fmtCtx secondValue:(int)streamId {
     // Example : https://ffmpeg.org/doxygen/trunk/hw__decode_8c_source.html
@@ -410,45 +431,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     }
     
     _nbStreams= fmt_ctx->nb_streams;
-    _streamInfo = malloc(sizeof(SingleStreamInfo) * _nbStreams);
     
-    for (int i=0; i<_nbStreams; i++) {
-        SingleStreamInfo *stream = &_streamInfo[i];
-        
-        const AVStream *st = fmt_ctx->streams[i];
-        
-        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-            if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
-                stream->stream_id = st->id;
-                stream->duration = st->duration;
-                stream->num_frames = st->nb_frames;
-                stream->type = Video;
-                stream->video_width = st->codecpar->width;
-                stream->video_height = st->codecpar->height;
-                stream->bits_per_sample = st->codecpar->bits_per_raw_sample;
-                _filled++;
-            } else {
-                fprintf(stderr, "Unsupported video codec type %s\n", avcodec_get_name(st->codecpar->codec_id));
-                ret = -1;
-            }
-        } else if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
-            if (st->codecpar->codec_id == AV_CODEC_ID_AAC) {
-                stream->stream_id = st->id;
-                stream->duration = st->duration;
-                stream->num_frames = st->nb_frames;
-                stream->type = Audio;
-                stream->bits_per_sample = st->codecpar->bits_per_raw_sample;
-                stream->audio_sample_rate = st->codecpar->sample_rate;
-                stream->audio_nb_channels=st->codecpar->ch_layout.nb_channels;
-                
-                _filled++;
-            } else {
-                fprintf(stderr, "Unsupported audio codec type %s\n", avcodec_get_name(st->codecpar->codec_id));
-                ret = -1;
-            }
-        }
-        
-    }
     // get best streams now
     if ((ret = [self getBestVideoStream]) < 0){
         return ret;
@@ -486,9 +469,6 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     // TODO: should we seek to the new position?? or is it done automatically
 }
 - (HlsOutputData * _Nullable) decode{
-    if (DEBUG){
-        printf("Starting decoding\n");
-    }
     int ret = 0;
     
     /* read frames from the file */
@@ -497,6 +477,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
             int ret = [self.audioDecoderCtx decodeAudio:_pkt secondValue:_output];
             
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)){
+                av_packet_unref(_pkt);
                 continue;
             }
             av_packet_unref(_pkt);
@@ -510,6 +491,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
         if (_pkt->stream_index == _videoStreamIndex){
             int ret = [self.videoDecoderCtx decodeVideo:_pkt secondValue:_output];
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN)){
+                av_packet_unref(_pkt);
                 continue;
             }
             av_packet_unref(_pkt);
@@ -537,11 +519,11 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
         return -1;
     }
     _videoStreamIndex = ret;
-    const SingleStreamInfo * info =  &_streamInfo[_videoStreamIndex];
+    const AVStream *info =  _avFmtCtx->streams[_videoStreamIndex];
     
     if (DEBUG){
         printf("Video index: %d\n",_videoStreamIndex);
-        printf("Video Dims (%d x %d)\n",info->video_width,info->video_height);
+        printf("Video Dims (%d x %d)\n",info->codecpar->width,info->codecpar->height);
     }
     
     return _videoStreamIndex;
@@ -558,11 +540,11 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     
     _audioStreamIndex = ret;
     
-    const SingleStreamInfo * info =  &_streamInfo[_audioStreamIndex];
+    const AVStream * info =  _avFmtCtx->streams[_audioStreamIndex];
     
     if (DEBUG){
         printf("Audio index: %d\n",_audioStreamIndex);
-        printf("Audio Sample Rate: %d\n,Channels: %d\n",info->audio_sample_rate,info->audio_nb_channels);
+        printf("Audio Sample Rate: %d\n,Channels: %d\n",info->codecpar->sample_rate,info->codecpar->ch_layout.nb_channels);
     }
     
     return _audioStreamIndex;
@@ -606,13 +588,6 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     return ret;
 }
 
-- (SingleStreamInfo const * _Nullable) getStreamInfo:(int) streamId{
-    
-    if (_filled <= streamId){
-        return NULL;
-    }
-    return &_streamInfo[streamId];
-}
 - (int) seekTo:(double)timeStamp{
     // seek both video and audio
     int ret = 0;
@@ -630,10 +605,6 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     // close the format decoder
     if (_avFmtCtx!=NULL){
         avformat_close_input(&_avFmtCtx);
-    }
-    if (_streamInfo != NULL){
-        // close the stream info
-        free(_streamInfo);
     }
 }
 

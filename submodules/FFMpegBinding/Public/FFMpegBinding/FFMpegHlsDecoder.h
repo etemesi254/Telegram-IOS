@@ -5,43 +5,29 @@
 #import "libavformat/avformat.h"
 #import "libavcodec/avcodec.h"
 #import "AVFoundation/AVFoundation.h"
-
-enum StreamType {
-    Audio = 0,
-    Video = 1
-}typedef StreamType;
-
-struct SingleStreamInfo {
-    int64_t stream_id;
-    int64_t duration;
-    int64_t num_frames;
-    int bits_per_sample;
-    
-    int video_width;
-    int video_height;
-    
-    int audio_sample_rate;
-    int audio_nb_channels;
-    StreamType type;
-} typedef SingleStreamInfo;
+#import "libswscale/swscale.h"
 
 @interface HlsVideoData:NSObject
 @property int width;
 @property int height;
-@property (nullable) NSMutableData *data;
 @end
 @implementation HlsVideoData
-@synthesize  width,height,data;
+@synthesize  width,height;
 @end
 
 @interface HlsOutputData : NSObject
 @property int streamType; // 0, audio 1,video
 @property (nullable) NSMutableData * audioData;
-@property (nullable) HlsVideoData * videoData;
+// NB (cae) using NSMUtableData has it creating an instance per frame
+// which baloons up memory like no man's business
+// Why does it do this? IDK, why doesn't audioData do this? IDK
+@property (nullable) uint8_t* videoData;
+@property int videoSize;
+@property (nullable) HlsVideoData * videoParams;
 @end
 
 @implementation HlsOutputData
-@synthesize streamType, audioData,videoData;
+@synthesize streamType, audioData,videoData,videoParams,videoSize;
 @end
 
 
@@ -76,17 +62,17 @@ struct SingleStreamInfo {
 @interface VideoCtx :NSObject
 @property (nullable) SingleCtx *ctx;
 @property (nullable) AVBufferRef *hwBufferRef;
+@property (nullable) AVFrame *bgraFrame;
 @property bool hwDecodingAvailable;
+@property (nullable) struct SwsContext *resizer;
+
 
 - (int) initCtx: (AVFormatContext * _Nonnull) fmtCtx secondValue: (int) streamId;
 - (int) initHwDecoder :(AVFormatContext * _Nonnull) fmtCtx secondValue: (int) streamId;
 - (int) decodeVideo: (AVPacket * _Nullable)pkt  secondValue: (HlsOutputData * _Nullable )output;
-
-
 - (void) dealloc;
 
 @end
-
 
 @interface FFmpegHLSDecoder : NSObject
 // The url we are fetching content from, can be file, http, tcp...
@@ -94,9 +80,6 @@ struct SingleStreamInfo {
 
 // number of filled streams for SingleStreamInfo
 @property int nbStreams;
-// Allocation of stream information, that can be shown on the swift side
-@property (nullable) SingleStreamInfo  *streamInfo;
-
 
 // The chosen video stream, -1 on initialization
 @property int videoStreamIndex;
@@ -136,7 +119,6 @@ struct SingleStreamInfo {
 - (int) seekTo: (double)timeStamp;
 
 
-- (SingleStreamInfo const * _Nullable) getStreamInfo:(int) streamId;
 - (HlsOutputData * _Nullable ) decode;
 @end
 

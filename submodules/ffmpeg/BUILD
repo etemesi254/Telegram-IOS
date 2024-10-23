@@ -97,7 +97,11 @@ ffmpeg_header_paths = [
     "libavcodec/dv_profile.h",
     "libswresample/version.h",
     "libswresample/swresample.h",
-    "libswresample/version_major.h"
+    "libswresample/version_major.h",
+  
+    "libswscale/swscale.h",
+    "libswscale/version_major.h",
+    "libswscale/version.h"
 ]
 
 ffmpeg_libs = [
@@ -105,6 +109,7 @@ ffmpeg_libs = [
     "libavcodec.a",
     "libavformat.a",
     "libswresample.a",
+    "libswscale.a"
 ]
 
 source_files = glob([
