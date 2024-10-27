@@ -24,10 +24,72 @@
 @property (nullable) uint8_t* videoData;
 @property int videoSize;
 @property (nullable) HlsVideoData * videoParams;
+@property int64_t pts;
+@property int64_t duration;
+
+- (int) cloneVideo: (HlsOutputData * _Nonnull) output;
+- (int) cloneAudio: (HlsOutputData * _Nonnull) output;
+- (void) dealloc;
 @end
 
 @implementation HlsOutputData
-@synthesize streamType, audioData,videoData,videoParams,videoSize;
+@synthesize streamType, audioData,videoData,videoParams,videoSize,pts,duration;
+
+- (int) cloneVideo:(HlsOutputData * _Nonnull) output{
+    if (output==NULL){
+        return -1;
+    }
+    
+    if (output.videoSize == 0){
+        uint8_t *newVideoStorage = malloc(videoSize);
+        if (newVideoStorage==NULL){
+            return -1;
+        }
+        output.videoData = newVideoStorage;
+    } else if (output.videoSize != videoSize){
+        uint8_t *realloced = realloc(output.videoData, videoSize);
+        if (realloced==NULL){
+            free(output.videoData);
+            return -1;
+        }
+        output.videoData = realloced;
+        
+    }
+    output.videoSize =  videoSize;
+    output.videoParams = [[HlsVideoData alloc] init];
+    output.pts=pts;
+    output.duration=duration;
+    output.videoParams.width = videoParams.width;
+    output.videoParams.height = videoParams.height;
+    
+    
+    // copy
+    memcpy(output.videoData, videoData, videoSize);
+    return 0;
+}
+- (int) cloneAudio:(HlsOutputData * _Nonnull) output{
+    if (output==NULL){
+        return -1;
+    }
+    
+    if (output.audioData.length != audioData.length){
+        
+        output.audioData = [NSMutableData dataWithLength:audioData.length];
+
+    }
+    output.pts = pts;
+    output.duration = duration;
+    memcpy(output.audioData.mutableBytes, audioData.bytes, audioData.length);
+    
+    return 1;
+}
+- (void)dealloc
+{
+    if (videoData!=NULL && self.videoSize!=0){
+        free(videoData);
+    }
+}
+
 @end
 
 
@@ -86,7 +148,8 @@
 // The chosen audio stream, -1 on initialization
 @property int audioStreamIndex;
 
-@property int filled;
+@property bool metadataRead;
+@property double frameRate;
 
 // The format demuxer. Stored to read the format details
 @property (nullable) AVFormatContext *avFmtCtx;
@@ -119,7 +182,7 @@
 - (int) seekTo: (double)timeStamp;
 
 
-- (HlsOutputData * _Nullable ) decode;
+- (HlsOutputData * _Nullable )decode;
 @end
 
 #endif

@@ -66,6 +66,7 @@ class HlsPlayerView: MTKView {
     override init(frame frameRect: CGRect, device: MTLDevice?) {
         super.init(frame: frameRect, device: device)
         self.device = device ?? MTLCreateSystemDefaultDevice()
+        self.preferredFramesPerSecond = 30;
         self.sizeRect = frameRect
         self.configureMetalView()
         self.createRenderPipeline()
@@ -185,10 +186,6 @@ class HlsPlayerView: MTKView {
         renderEncoder.endEncoding();
         commandBuffer.present(drawable);
         commandBuffer.commit();
-        
-        
-        
-        
         
     }
 }

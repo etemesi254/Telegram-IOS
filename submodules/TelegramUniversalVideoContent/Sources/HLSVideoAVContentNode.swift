@@ -86,6 +86,9 @@ final class HLSVideoAVContentNode: ASDisplayNode, UniversalVideoContentNode {
     
     private var preferredVideoQuality: UniversalVideoContentVideoQuality = .auto
     
+    private func updateRate(rate:Float){
+        self.updateStatus();
+    }
     init(accountId: AccountRecordId, postbox: Postbox, audioSessionManager: ManagedAudioSession, userLocation: MediaResourceUserLocation, fileReference: FileMediaReference, streamVideo: Bool, loopVideo: Bool, enableSound: Bool, baseRate: Double, fetchAutomatically: Bool) {
         self.postbox = postbox
         self.fileReference = fileReference
@@ -115,19 +118,6 @@ final class HLSVideoAVContentNode: ASDisplayNode, UniversalVideoContentNode {
         
         self.intrinsicDimensions = fileReference.media.dimensions?.cgSize ?? CGSize(width: 480.0, height: 320.0)
         self.playerNode.frame = CGRect(origin: CGPoint(), size: self.intrinsicDimensions)
-    
-    
-        var player: HLSVideoPlayer?
-        player = HLSVideoPlayer(url:"",displayLocation: self.playerNode)
-        self.player = player
-        //        if #available(iOS 16.0, *) {
-        //            player?.defaultRate = Float(baseRate)
-        //        }
-        if !enableSound {
-            player?.volume = 0.0
-        }
-        
-
         
         if let qualitySet = HLSQualitySet(baseFile: fileReference) {
             self.playerSource = HLSServerSource(accountId: accountId.int64, fileId: fileReference.media.fileId.id, postbox: postbox, userLocation: userLocation, playlistFiles: qualitySet.playlistFiles, qualityFiles: qualitySet.qualityFiles)
@@ -135,6 +125,16 @@ final class HLSVideoAVContentNode: ASDisplayNode, UniversalVideoContentNode {
         
         super.init()
         
+        var player: HLSVideoPlayer?
+        player = HLSVideoPlayer(url:"",displayLocation: self.playerNode,onRateChange: self.updateRate)
+        self.player = player
+        //        if #available(iOS 16.0, *) {
+        //            player?.defaultRate = Float(baseRate)
+        //        }
+        if !enableSound {
+            player?.volume = 0.0
+        }
+       
         self.imageNode.setSignal(internalMediaGridMessageVideo(postbox: postbox, userLocation: self.userLocation, videoReference: fileReference) |> map { [weak self] getSize, getData in
             Queue.mainQueue().async {
                 if let strongSelf = self, strongSelf.dimensions == nil {
@@ -230,6 +230,9 @@ final class HLSVideoAVContentNode: ASDisplayNode, UniversalVideoContentNode {
         self.serverDisposable?.dispose()
         
         self.statusTimer?.invalidate()
+        self.player?.dealloc();
+        self.player = nil;
+        self.playerRenderer = nil;
     }
     
     private func setPlayerItem(_ item: AVPlayerItem?) {
@@ -307,10 +310,12 @@ final class HLSVideoAVContentNode: ASDisplayNode, UniversalVideoContentNode {
         }
         let isPlaying = !player.rate.isZero
         let status: MediaPlayerPlaybackStatus
-        if self.isBuffering {
+        if player.isBuffering && !player.isPaused {
+            self.isBuffering=true;
             status = .buffering(initial: false, whilePlaying: isPlaying, progress: 0.0, display: true)
         } else {
             status = isPlaying ? .playing : .paused
+            self.isBuffering=false;
         }
         var timestamp = player.currentTime().seconds
         if timestamp.isFinite && !timestamp.isNaN {

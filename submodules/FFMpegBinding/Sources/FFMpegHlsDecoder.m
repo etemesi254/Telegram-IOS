@@ -132,6 +132,8 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
         assert(_ctx.ctx->codec->type==AVMEDIA_TYPE_AUDIO &&
                "A codec that is not audio sent to audio decoder");
                 ret = [self convertFrameToPCM: output];
+        output.pts = _ctx.frame->pts;
+        output.duration = _ctx.frame->duration;
         
         return ret;
     }
@@ -211,14 +213,14 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     }
     
     
-//    _hwDecodingAvailable=false;
-//    if ([self initHwDecoder:ctx secondValue:streamId] < 0){
-//        NSLog(@"Could not initialize hardware decoder, using software decoder");
-//        _hwDecodingAvailable=false;
-//    } else{
-//        NSLog(@"Hardware decoder successfully initialized, using it for decoding");
-//        _hwDecodingAvailable=true;
-//    }
+    _hwDecodingAvailable=false;
+    if ([self initHwDecoder:ctx secondValue:streamId] < 0){
+        NSLog(@"Could not initialize hardware decoder, using software decoder");
+        _hwDecodingAvailable=false;
+    } else{
+        NSLog(@"Hardware decoder successfully initialized, using it for decoding");
+        _hwDecodingAvailable=true;
+    }
     return 0;
 }
 - (int) decodeVideo:(AVPacket * _Nullable) pkt secondValue:(HlsOutputData * _Nullable)output{
@@ -287,11 +289,13 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
             if (videoData==NULL){
                 return AVERROR(ENOMEM);
             }
-            output.videoData =videoData;
-            output.videoSize=dest_size;
+            output.videoData = videoData;
+            output.videoSize = dest_size;
         }
         
         
+        output.pts = tmp_frame->pts;
+        output.duration=tmp_frame->duration;
         output.videoParams.width = _ctx.frame->width;
         output.videoParams.height = _ctx.frame->height;
         output.streamType = 1;
@@ -377,6 +381,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
         NSLog(@"Calling Init ");
     }
     _url =url;
+    _metadataRead=false;
     _videoStreamIndex = -1;
     _audioStreamIndex = -1;
     _shouldDecodeAudio=true;
@@ -446,6 +451,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     if ((ret=[self initializeAudioCodec:(int)_audioStreamIndex]) < 0){
         return ret;
     }
+    _metadataRead=true;
     return ret;
     
 }
@@ -470,6 +476,14 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
 }
 - (HlsOutputData * _Nullable) decode{
     int ret = 0;
+
+    if (!_metadataRead){
+        ret = [self readData ];
+        if (ret<0){
+            fprintf(stderr, "Cannot read metadata");
+            return NULL;
+        }
+    }
     
     /* read frames from the file */
     while (av_read_frame(_avFmtCtx, _pkt) >= 0) {
@@ -541,6 +555,7 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     _audioStreamIndex = ret;
     
     const AVStream * info =  _avFmtCtx->streams[_audioStreamIndex];
+   
     
     if (DEBUG){
         printf("Audio index: %d\n",_audioStreamIndex);
@@ -556,6 +571,9 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
     ret = [context initCtx:_avFmtCtx secondValue:videoStreamId];
     _videoDecoderCtx = context;
     
+    AVStream *info = _avFmtCtx->streams[videoStreamId];
+    
+    _frameRate = av_q2d( info->avg_frame_rate);
     
     if (ret<0){
         if (DEBUG){
@@ -591,21 +609,40 @@ static enum AVPixelFormat get_hw_format(AVCodecContext *ctx,
 - (int) seekTo:(double)timeStamp{
     // seek both video and audio
     int ret = 0;
-    if ((ret=av_seek_frame(_avFmtCtx, _videoStreamIndex, (int)timeStamp,0)) <0){
-        return ret;
+    // convert timestamp
+    {
+        AVStream* videoStream = _avFmtCtx->streams[_videoStreamIndex];
+        
+        int64_t timestamp = (int64_t)(timeStamp * AV_TIME_BASE);
+        int64_t vTimeStamp = av_rescale_q(timestamp, AV_TIME_BASE_Q, videoStream->time_base);
+        if ((ret=av_seek_frame(_avFmtCtx, _videoStreamIndex, (int)vTimeStamp,0)) <0){
+            return ret;
+        }
     }
-    if ((ret=av_seek_frame(_avFmtCtx, _audioStreamIndex, (int)timeStamp,0)) <0){
-        return ret;
+    // Repeat for auudio
+    {
+        AVStream* audioStream = _avFmtCtx->streams[_audioStreamIndex];
+        
+        int64_t timestamp = (int64_t)(timeStamp * AV_TIME_BASE);
+        int64_t aTimeStamp = av_rescale_q(timestamp, AV_TIME_BASE_Q, audioStream->time_base);
+
+        if ((ret=av_seek_frame(_avFmtCtx, _audioStreamIndex, (int)aTimeStamp,0)) <0){
+            return ret;
+        }
     }
     return ret;
-    
 }
+
 - (void) dealloc{
     
     // close the format decoder
     if (_avFmtCtx!=NULL){
         avformat_close_input(&_avFmtCtx);
     }
+    av_packet_free(&_pkt);
+    // close hls
+    
+    
 }
 
 @end
